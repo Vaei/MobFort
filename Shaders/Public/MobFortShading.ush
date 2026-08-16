@@ -1,0 +1,280 @@
+// Copyright (c) Jared Taylor
+
+#pragma once
+
+// Stylised shading for a renderer that supplies none. Included from Custom nodes as
+// /MobFort/Public/MobFortShading.ush.
+//
+// The masters are Unlit, so nothing the engine does with lights, GI or reflections reaches them.
+// Every term here is authored instead: one directional light read from a parameter collection, a
+// gradient standing in for the diffuse falloff, a pre-blurred cubemap standing in for every
+// reflection in the scene, and no ambient at all - the gradient simply never reaches black.
+//
+// What that buys is a character who reads the same in every corner of a level. Lighting that
+// responds to where someone is standing is lighting that can hide them.
+//
+// The surface taps happen in TextureSample nodes on the shared sampler, so those functions consume
+// already-sampled values. The panorama is the one thing sampled here: it needs an explicit mip
+// chosen from roughness, and it brings its own sampler with it.
+
+#define FORT_EPS 1e-5f
+
+// ---------------------------------------------------------------------------
+// Vectors
+// ---------------------------------------------------------------------------
+
+/** Tangent-space normal into world space. */
+float3 FortWorldNormal(float3 TangentNormal, float3x3 TangentToWorld)
+{
+	return normalize(mul(TangentNormal, TangentToWorld));
+}
+
+/**
+ * Mirror of V about N.
+ *
+ * The engine's own reflection vector is an input to a lit material and is not available to an
+ * unlit one, so the cubemap lookup builds its own.
+ */
+float3 FortReflect(float3 N, float3 V)
+{
+	return 2.0f * dot(N, V) * N - V;
+}
+
+/**
+ * Half-Lambert. On its own this is a flat wash; it exists to be the coordinate a gradient is read
+ * with, and the gradient is what puts the terminator somewhere an artist chose.
+ */
+float FortDiffuseTime(float NdotL)
+{
+	return NdotL * 0.5f + 0.5f;
+}
+
+/**
+ * The older styling, kept for weapons: two colours and a soft edge between them, with no gradient
+ * in the way. A weapon is mostly shiny metal, so the specular carries it and the extra control a
+ * gradient would give has nothing to act on.
+ */
+float3 FortSmoothstepDiffuse(float Time, float ShadowEdge, float LightEdge, float3 ShadowColor, float3 LightColor)
+{
+	const float T = smoothstep(min(ShadowEdge, LightEdge - FORT_EPS), LightEdge, Time);
+	return lerp(ShadowColor, LightColor, T);
+}
+
+// ---------------------------------------------------------------------------
+// Texture pack
+// ---------------------------------------------------------------------------
+//
+// BaseColor, Normal and CRM - Cavity, Roughness, Metallic. There is no specular channel; the level
+// is the inverse of roughness. Emissive rides the albedo's alpha, behind a switch, so a character
+// still fits in three textures plus the gradient atlas every character shares.
+
+/**
+ * Cavity, Roughness and Metallic out of one texture.
+ *
+ * No ambient occlusion channel, on purpose. Cavity is micro shadowing - the crease between two
+ * plates, the gap between two straps - and it is a multiplier on colour and on specular rather
+ * than an occlusion term. That distinction costs nothing here, where an unlit master is the only
+ * thing shading the surface, and it is what lets one texture serve a lit master in the same
+ * project without a baked occlusion doubling up on the renderer's own.
+ */
+void FortUnpackCRM(float3 CRM, out float Cavity, out float Roughness, out float Metallic)
+{
+	Cavity = saturate(CRM.r);
+	Roughness = saturate(CRM.g);
+	Metallic = saturate(CRM.b);
+}
+
+// ---------------------------------------------------------------------------
+// Specular
+// ---------------------------------------------------------------------------
+
+/**
+ * Long/lat coordinate for a direction.
+ *
+ * The reflection source is a panorama rather than a cubemap. It is a 2D tap, so it costs one
+ * sampler instead of a cube sampler of its own, and it can be painted: a stylised specular is only
+ * worth standing up in place of a captured one if an artist can put the highlights where the level
+ * wants them.
+ */
+float2 FortPanoramaUV(float3 Dir)
+{
+	Dir = normalize(Dir);
+	return float2(atan2(Dir.y, Dir.x) * (0.5f / PI) + 0.5f,
+		acos(clamp(Dir.z, -1.0f, 1.0f)) / PI);
+}
+
+/**
+ * Roughness to mip.
+ *
+ * Square root rather than a straight scale: the sharp end of the range is where the difference
+ * between two roughness values is visible, so it gets more of the mip chain. Assumes the panorama
+ * was imported with mips - without them this is a mirror at every roughness.
+ */
+float FortRoughnessMip(float Roughness, float MaxMip)
+{
+	return sqrt(saturate(Roughness)) * max(MaxMip, 0.0f);
+}
+
+/**
+ * The whole specular response: one panorama tap, tinted and weighted.
+ *
+ * There are no analytic highlights anywhere in this model. A pre-blurred environment gives a shape
+ * that reads as material rather than as a light, and it costs the same on a shiny surface as a
+ * rough one.
+ *
+ * The mip is chosen rather than derived, which is also what keeps the long/lat seam quiet: an
+ * implicit derivative across the wrap would pick the smallest mip in the chain for that one column
+ * of pixels.
+ */
+float3 FortSpecular(Texture2D Panorama, SamplerState PanoramaSampler, float3 R, float3 Albedo,
+	float Metallic, float Roughness, float NdotV, float SpecularScalar, float MaxMip,
+	float FresnelBoost, float bFresnel)
+{
+	const float3 Env = Texture2DSampleLevel(Panorama, PanoramaSampler, FortPanoramaUV(R),
+		FortRoughnessMip(Roughness, MaxMip)).rgb;
+
+	// The pack has no specular channel: the level is the inverse of roughness, so a rough
+	// dielectric reflects less as well as more diffusely. A metal keeps its reflectance and takes
+	// its colour from albedo instead.
+	const float M = saturate(Metallic);
+	const float3 Tint = SpecularScalar * lerp(1.0f - saturate(Roughness), 1.0f, M) * lerp(float3(1, 1, 1), Albedo, M);
+
+	// A hand-painted panorama carries its own hot spots. A captured cubemap does not, so the
+	// grazing boost puts an edge back for a handful of instructions.
+	const float Grazing = pow(1.0f - saturate(NdotV), 5.0f);
+	const float Boost = lerp(1.0f, 1.0f + Grazing * FresnelBoost, saturate(bFresnel));
+
+	return Env * Tint * Boost;
+}
+
+// ---------------------------------------------------------------------------
+// Indirect
+// ---------------------------------------------------------------------------
+
+/**
+ * How much of each response a given area gets. Packed as (Diffuse, Specular, Min, Max).
+ *
+ * Specular is darkened harder than diffuse by the exponent, because a shadowed character lit only
+ * by a reflection reads as a chrome cutout. Both are clamped to the same window so a bright volume
+ * cannot blow a character out and a dark one cannot swallow them - which is the entire reason this
+ * is a pair of scalars rather than a light.
+ */
+void FortIndirect(float4 Indirect, float SpecDarken, out float OutDiffuse, out float OutSpec)
+{
+	OutDiffuse = clamp(Indirect.x, Indirect.z, Indirect.w);
+	OutSpec = clamp(pow(max(Indirect.y, 0.0f), max(SpecDarken, FORT_EPS)), Indirect.z, Indirect.w);
+}
+
+// ---------------------------------------------------------------------------
+// Distance
+// ---------------------------------------------------------------------------
+
+/**
+ * Distance compensation, packed as (Start, End, BrightenMax, FresnelScaleMax).
+ *
+ * A character across the map covers a few dozen pixels, and every cue that identifies them is
+ * fighting the background at that size. Both are clamped at the far end or a distant target turns
+ * into a lamp.
+ */
+void FortDepth(float PixelDepth, float4 Depth, out float OutBrighten, out float OutFresnelScale)
+{
+	const float D = saturate((PixelDepth - Depth.x) / max(Depth.y - Depth.x, FORT_EPS));
+	OutBrighten = D * Depth.z;
+	OutFresnelScale = lerp(1.0f, Depth.w, D);
+}
+
+// ---------------------------------------------------------------------------
+// Friend or foe
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the team rim sits on a character.
+ *
+ * Grazing angle alone puts an even outline all the way round, which competes with the silhouette
+ * instead of describing it. Two weights fix that: up-facing surfaces catch more, because that is
+ * what a light from above would do and the eye reads it as lighting rather than as an overlay; and
+ * the upper body catches more, because that is where a player is already looking.
+ *
+ * LocalZ against the object's own bounds rather than world height, so it lands the same on a
+ * crouching character as a standing one.
+ */
+float FortFresnelMask(float3 N, float NdotV, float LocalZ, float BoundsMinZ, float BoundsMaxZ,
+	float UpBias, float HeightBias, float FresnelScale)
+{
+	const float Grazing = saturate((1.0f - saturate(NdotV)) * FresnelScale);
+	const float Up = lerp(1.0f, saturate(N.z * 0.5f + 0.5f), saturate(UpBias));
+	const float Height = saturate((LocalZ - BoundsMinZ) / max(BoundsMaxZ - BoundsMinZ, FORT_EPS));
+	return saturate(Grazing * Up * lerp(1.0f, Height, saturate(HeightBias)));
+}
+
+// ---------------------------------------------------------------------------
+// Skin
+// ---------------------------------------------------------------------------
+
+/**
+ * The wax underglow: light that entered somewhere else and left here.
+ *
+ * Given a specular-like grazing response rather than a diffuse one because it comes off the
+ * surface, not through it, and strengthened where the direct light is weakest - which is the only
+ * place there is anything left to see. Skin also wants a redder falloff than cloth, which is a
+ * second gradient row rather than anything computed here.
+ */
+float FortUnderglowMask(float NdotV, float Power, float DiffuseScale)
+{
+	const float Grazing = pow(saturate(1.0f - NdotV), max(Power, FORT_EPS));
+	return Grazing * lerp(2.0f, 1.0f, saturate(DiffuseScale));
+}
+
+// ---------------------------------------------------------------------------
+// Compose
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything lands on emissive. The masters are unlit, so no other pin survives to the frame.
+ *
+ * Brighten scales the lit term rather than adding to it: a flat add lifts the core shadow along
+ * with everything else and the character goes milky at exactly the distance the cue was for.
+ */
+float3 FortCompose(float3 Albedo, float3 Diffuse, float3 SunColor, float Cavity, float DiffuseScale,
+	float3 Specular, float SpecScale, float Emissive, float3 Extra, float Brighten)
+{
+	const float3 Lit = Albedo * Cavity * Diffuse * SunColor * DiffuseScale;
+
+	// Cavity multiplies specular as well as colour, because a crease that is dark is also a crease
+	// that does not catch a reflection. Emissive is the one term it is kept off: something that
+	// glows is not micro shadowed by the surface it is set into.
+	return max(Lit * (1.0f + Brighten) + Specular * Cavity * SpecScale
+		+ Albedo * Emissive + Extra, 0.0f);
+}
+
+// ---------------------------------------------------------------------------
+// Debug
+// ---------------------------------------------------------------------------
+
+/**
+ * Replaces the shaded result with whichever intermediate the artist asked to see.
+ *
+ * The terms that decide whether a character is readable are the ones with no signature in the
+ * final image: a rim weighted to the wrong half of the body and a rim weighted correctly both
+ * just look like a rim until you put them side by side.
+ *
+ *   1 diffuse gradient        5 friend-or-foe mask
+ *   2 specular                6 skin mask
+ *   3 world normal            7 underglow mask
+ *   4 cavity                  8 distance brighten
+ */
+float3 FortDebugView(int Mode, float3 Diffuse, float3 Specular, float3 Normal, float Cavity,
+	float Fresnel, float SkinMask, float Underglow, float Brighten, float Roughness, float Metallic)
+{
+	if (Mode == 1) { return saturate(Diffuse); }
+	if (Mode == 2) { return saturate(Specular); }
+	if (Mode == 3) { return saturate(Normal * 0.5f + 0.5f); }
+	if (Mode == 4) { return saturate(Cavity).xxx; }
+	if (Mode == 5) { return float3(saturate(Fresnel), 0.0f, 0.0f); }
+	if (Mode == 6) { return float3(0.0f, saturate(SkinMask), 0.0f); }
+	if (Mode == 7) { return saturate(Underglow).xxx; }
+	if (Mode == 8) { return float3(0.0f, 0.0f, saturate(Brighten * 4.0f)); }
+	if (Mode == 9) { return saturate(Roughness).xxx; }
+	if (Mode == 10) { return saturate(Metallic).xxx; }
+	return 0.0f.xxx;
+}

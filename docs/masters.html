@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Masters &middot; MobFort</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/docs.css">
+<script>try{var t=localStorage.getItem('mob-theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}catch(e){}</script>
+<script src="assets/site.js" defer></script>
+<script src="assets/docs.js" defer></script>
+</head>
+<body>
+<main>
+
+<h1>Masters</h1>
+<p class="lede">Every parameter, and what it is for.</p>
+
+<div class="tw"><table class="free">
+<tbody>
+<tr><td><code>M_FortCharacter</code></td><td>gradient diffuse, rim, skin, distance response</td></tr>
+<tr><td><code>M_FortWeapon</code></td><td>weapons and hard-surface props. Smoothstep diffuse, no rim, no skin</td></tr>
+<tr><td><code>M_FortBase</code></td><td>anything else. The shared responses and nothing else</td></tr>
+</tbody>
+</table></div>
+
+<h2>Textures</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Parameter</th><th>What</th></tr></thead>
+<tbody>
+<tr><td><code>BaseColor</code></td><td>albedo. Its <b>alpha</b> is the emissive mask</td></tr>
+<tr><td><code>Normal</code></td><td>tangent space</td></tr>
+<tr><td><code>CRM</code></td><td>Cavity, Roughness, Metallic</td></tr>
+<tr><td><code>SpecPanorama</code></td><td>equirectangular HDR. Every reflection in the scene</td></tr>
+<tr><td><code>Atlas</code></td><td>the gradient atlas. <a href="gradients.html">One per character if you want</a></td></tr>
+</tbody>
+</table></div>
+
+<p>Three textures plus one shared atlas, which is the budget a character gets.</p>
+
+<p>There is no specular channel - the level is the inverse of roughness. There is no ambient occlusion channel either: <b>cavity</b> is micro shadowing, the crease between two plates, and it multiplies colour and specular rather than acting as occlusion. That way the same texture serves a lit master in the same project without a baked occlusion doubling with the renderer's own.</p>
+
+<div data-shot="masters.pack"></div>
+
+<h2>Features</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Switch</th><th>Default</th><th>What</th></tr></thead>
+<tbody>
+<tr><td><code>bUseCRMTexture</code></td><td>off</td><td>read the pack. Off, the three channels come from scalars, which is what a prop with no pack should do</td></tr>
+<tr><td><code>bSpecularFresnel</code></td><td>on</td><td>grazing boost on the reflection. A captured panorama has no painted hot spots and reads flat without it</td></tr>
+<tr><td><code>bEmissive</code></td><td>off</td><td>emissive from the albedo alpha</td></tr>
+<tr><td><code>bSkin</code></td><td>on</td><td>blend the redder skin falloff where the vertex mask says</td></tr>
+<tr><td><code>bUnderglow</code></td><td>on</td><td>the wax term</td></tr>
+<tr><td><code>bFriendFoeRim</code></td><td>on</td><td>the rim light</td></tr>
+<tr><td><code>bEnemy</code></td><td>off</td><td>which rim row this instance reads</td></tr>
+<tr><td><code>bUseDiffuse</code></td><td>on</td><td>off drops the whole diffuse response and its gradient tap</td></tr>
+<tr><td><code>bUseSpecular</code></td><td>on</td><td>off drops the panorama tap and its sampler</td></tr>
+<tr><td><code>bDebug</code></td><td>off</td><td>replaces the shaded result with one intermediate</td></tr>
+</tbody>
+</table></div>
+
+<div class="warn">
+<code>bEmissive</code> is off by default because a texture with no alpha samples as 1. Turn it on over an albedo without alpha and the whole surface emits.
+</div>
+
+<h2>Surface</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Parameter</th><th>Default</th><th>What</th></tr></thead>
+<tbody>
+<tr><td><code>Tint</code></td><td>white</td><td>multiplies BaseColor. A per-character or per-team colour belongs here, not in the rim</td></tr>
+<tr><td><code>Cavity</code></td><td>1</td><td>used when <code>bUseCRMTexture</code> is off. 1 is none</td></tr>
+<tr><td><code>Roughness</code></td><td>0.5</td><td>same</td></tr>
+<tr><td><code>Metallic</code></td><td>0</td><td>same</td></tr>
+<tr><td><code>EmissiveIntensity</code></td><td>1</td><td>scales the alpha mask</td></tr>
+</tbody>
+</table></div>
+
+<h2>Specular</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Parameter</th><th>Default</th><th>What</th></tr></thead>
+<tbody>
+<tr><td><code>SpecularScalar</code></td><td>0.12</td><td>overall reflection strength. The panorama is HDR, so this is small</td></tr>
+<tr><td><code>MaxMip</code></td><td>8</td><td>the mip a roughness of 1 reads. Roughly where the panorama is a few pixels across</td></tr>
+<tr><td><code>FresnelBoost</code></td><td>2</td><td>how hard the grazing boost pushes</td></tr>
+</tbody>
+</table></div>
+
+<p>One tap, at a mip chosen from roughness. There are no analytic highlights anywhere in this model, which is why a rough surface costs exactly what a shiny one does.</p>
+
+<h2>Rim <span class="foot">character only</span></h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Parameter</th><th>Default</th><th>What</th></tr></thead>
+<tbody>
+<tr><td><code>RimIntensity</code></td><td>1.5</td><td>how bright</td></tr>
+<tr><td><code>RimUpBias</code></td><td>0.35</td><td>how much the rim prefers up-facing surfaces</td></tr>
+<tr><td><code>RimHeightBias</code></td><td>0.25</td><td>how much it prefers the upper body</td></tr>
+<tr><td><code>bEnemy</code></td><td>off</td><td>which of the two rim rows this instance reads</td></tr>
+</tbody>
+</table></div>
+
+<p>Two rim palettes, picked per instance. The names come from the obvious use - ally and enemy - but nothing in the material cares what the distinction means. Faction, hostile and neutral NPCs, a status effect, an interactable versus scenery, or one palette and a second you never enable.</p>
+
+<p>Grazing angle alone puts an even outline all the way round, which competes with the silhouette instead of describing it. The two biases are what make it read as lighting rather than as an overlay: up-facing surfaces catch more because that is what a light from above would do, and the upper body catches more because that is where the eye goes.</p>
+
+<p>Height is measured against the object's own bounds, so it lands the same on a crouching character as a standing one.</p>
+
+<div data-shot="masters.rim"></div>
+
+<h2>Skin <span class="foot">character only</span></h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Parameter</th><th>Default</th><th>What</th></tr></thead>
+<tbody>
+<tr><td><code>SkinAmount</code></td><td>0</td><td>scales the <b>red vertex channel</b></td></tr>
+<tr><td><code>UnderglowPower</code></td><td>2.5</td><td>how tightly the wax term hugs the silhouette</td></tr>
+<tr><td><code>UnderglowIntensity</code></td><td>1</td><td>how bright</td></tr>
+</tbody>
+</table></div>
+
+<div class="warn">
+<code>SkinAmount</code> starts at <b>0</b>. An unpainted mesh arrives with white vertex colours, so any other default means every character is fully skin-shaded until someone paints one.
+</div>
+
+<p>Skin gets a redder falloff row and an underglow with a specular-like grazing response - it comes off the surface, not through it. The underglow strengthens where the direct light is weakest, which is the only place there is anything left to see.</p>
+
+<div data-shot="masters.skin"></div>
+
+<h2>Weapon <span class="foot">weapon only</span></h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Parameter</th><th>Default</th><th>What</th></tr></thead>
+<tbody>
+<tr><td><code>ShadowEdge</code></td><td>0.35</td><td>where the dark side ends</td></tr>
+<tr><td><code>LightEdge</code></td><td>0.65</td><td>where the lit side begins</td></tr>
+<tr><td><code>ShadowColor</code></td><td>dark blue-grey</td><td></td></tr>
+<tr><td><code>LightColor</code></td><td>white</td><td></td></tr>
+</tbody>
+</table></div>
+
+<p>Two colours and a soft edge, no gradient. A weapon is mostly shiny metal, so the specular carries it and the extra control a gradient gives has nothing to act on.</p>
+
+<h2>Debug</h2>
+
+<p><code>bDebug</code> replaces the shaded result with one intermediate, chosen by <code>DebugMode</code>. The terms that decide whether a character is readable are exactly the ones with no signature in the final image: a rim weighted to the wrong half of the body and a rim weighted correctly both just look like a rim until you put them side by side.</p>
+
+<div class="tw"><table class="free">
+<tbody>
+<tr><td><code>1</code> diffuse gradient</td><td><code>5</code> rim mask</td><td><code>9</code> roughness</td></tr>
+<tr><td><code>2</code> specular</td><td><code>6</code> skin mask</td><td><code>10</code> metallic</td></tr>
+<tr><td><code>3</code> world normal</td><td><code>7</code> underglow</td><td></td></tr>
+<tr><td><code>4</code> cavity</td><td><code>8</code> distance brighten</td><td></td></tr>
+</tbody>
+</table></div>
+
+<div data-shot="masters.debug"></div>
+
+<div class="note">
+Mode 5 shows the rim mask <i>before</i> the gradient shapes it, so a broad red wash is correct. The gradient's knee is what turns that into an edge.
+</div>
+
+</main>
+</body>
+</html>

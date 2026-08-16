@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cost &middot; MobFort</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/docs.css">
+<script>try{var t=localStorage.getItem('mob-theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}catch(e){}</script>
+<script src="assets/site.js" defer></script>
+<script src="assets/docs.js" defer></script>
+</head>
+<body>
+<main>
+
+<h1>Cost</h1>
+<p class="lede">Measured, not claimed. <b>Fort &rarr; Verify Contract</b> re-checks all of it.</p>
+
+<h2>Where it lands</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Master</th><th>Everything off</th><th>Everything on</th><th>Taps</th><th>Samplers</th></tr></thead>
+<tbody>
+<tr><td><code>M_FortCharacter</code></td><td>124</td><td><b>277</b></td><td>6</td><td>3</td></tr>
+<tr><td><code>M_FortWeapon</code></td><td>124</td><td><b>205</b></td><td>2</td><td>2</td></tr>
+<tr><td><code>M_FortBase</code></td><td>124</td><td><b>200</b></td><td>3</td><td>3</td></tr>
+</tbody>
+</table></div>
+
+<p>Pixel shader instructions, from the Material Editor's own estimate. It over-reports, so treat these as baselines to hold steady rather than ground truth.</p>
+
+<div data-shot="performance.stats"></div>
+
+<h2>What each switch gives back</h2>
+
+<p>On the character, from everything on:</p>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Turning off</th><th>Saves</th><th>Also</th></tr></thead>
+<tbody>
+<tr><td><code>bFriendFoeRim</code></td><td>56</td><td>a gradient tap</td></tr>
+<tr><td><code>bUseSpecular</code></td><td>38</td><td>the panorama tap and its sampler</td></tr>
+<tr><td><code>bUseDiffuse</code></td><td>19</td><td>two gradient taps</td></tr>
+<tr><td><code>bUnderglow</code></td><td>14</td><td>a gradient tap</td></tr>
+<tr><td><code>bSkin</code></td><td>7</td><td>a gradient tap</td></tr>
+</tbody>
+</table></div>
+
+<p>These are real, not nominal. Feature gating is static bools on material function inputs, and a discarded function input is never compiled - so a switched-off feature takes its texture taps with it, not just its arithmetic.</p>
+
+<h2>The floor</h2>
+
+<p>124 instructions with every switch off. That is the shared surface block: the albedo and normal taps, the shading vectors, the pack unpack, and the clamped indirect and distance responses.</p>
+
+<p>It does not shrink, because a Custom node emits its whole body whether or not an output is read. That is the trade for having the maths in a <code>.ush</code> instead of the graph, and it is the obvious place to look first if the budget gets tight.</p>
+
+<h2>Samplers</h2>
+
+<p>Three at most, on any master.</p>
+
+<div class="tw"><table class="free">
+<tbody>
+<tr><td>BaseColor, Normal, CRM</td><td>share one - they are all on the world wrap group</td></tr>
+<tr><td>The gradient atlas</td><td>one, however many rows are read</td></tr>
+<tr><td>The panorama</td><td>one, because a Custom node brings its own</td></tr>
+</tbody>
+</table></div>
+
+<p>Nowhere near the 16 the platform allows, and the verify pass asserts it stays that way.</p>
+
+<h2>Vertex</h2>
+
+<p>153 on the environment master, 313 on the character and weapon. The difference is the skeletal mesh vertex factory, not anything in the shading - nothing here writes world position offset.</p>
+
+<h2>Verifying</h2>
+
+<p><b>Fort &rarr; Verify Contract</b>. It builds an instance per feature and asserts what this page claims, one at a time, so a failure names the claim that stopped being true.</p>
+
+<div class="note">
+A permutation nobody has compiled before reports zero instructions and <b>fails</b> rather than being skipped, because that is indistinguishable from one that failed to compile - which is exactly where a default-off branch hides a broken sampler type. On a cold derived data cache, run it a second time before believing it.
+</div>
+
+<div data-shot="performance.verify"></div>
+
+</main>
+</body>
+</html>

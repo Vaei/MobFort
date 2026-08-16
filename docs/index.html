@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MobFort</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/docs.css">
+<script>try{var t=localStorage.getItem('mob-theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}catch(e){}</script>
+<script src="assets/site.js" defer></script>
+<script src="assets/docs.js" defer></script>
+</head>
+<body>
+<main>
+
+<h1>MobFort</h1>
+<p class="lede">Characters that look like Valorant or Team Fortress 2. Or better - because Valorant is deliberately holding back. Unlit master materials for Unreal's mobile forward renderer.</p>
+
+<div data-shots="index.hero, index.rim"></div>
+
+<pre><code>cd YourProject/Plugins
+git clone git@github.com:Vaei/MobFort.git</code></pre>
+
+<p><a class="cta" href="install.html">Install it &rarr;</a></p>
+
+<div class="caution">
+Not officially released. Expect bugs and updates without versioning.
+</div>
+
+<h2>The idea</h2>
+
+<p>Riot tuned this model so that nothing about a character competes with spotting one. The restraint <i>is</i> the feature there: controlled contrast, tones that never fight the read, no flourish that could be mistaken for movement. If you are not making a tactical shooter you inherit the technique without the constraint, and you can push the gradients, the rim and the skin as far as your art direction wants to go.</p>
+
+<p>Valve got there first - the wrapped falloff and the rim light are out of Team Fortress 2. Riot rebuilt it for a modern forward renderer and, unusually, wrote down how. This is that write-up implemented in Unreal.</p>
+
+<h3>How it works</h3>
+
+<p>A lit character is at the mercy of the room. Walk into a dark corner and the art direction goes with it - the palette shifts, the silhouette softens, and the model you spent a week on reads as a grey shape.</p>
+
+<p>So none of this is lit. The masters are Unlit and every term is authored: one directional light read from a parameter collection, a gradient in place of the diffuse falloff, a pre-blurred HDR panorama in place of every reflection in the scene, and no ambient term at all - the gradient never reaches black, so nothing ever goes fully dark.</p>
+
+<p>What that buys, in any genre: a character who looks like themselves everywhere, a look set by dragging gradient stops rather than by placing lights, and a cost that does not move.</p>
+
+<div class="note">
+Competitive shooters want this most acutely - lighting that can hide a player is a fairness problem, not just a visual one. But the technique came out of an art-direction problem before it was a clarity one, and a stylized single-player game gets the same three things without having to hold anything back.
+</div>
+
+<h2>What you get</h2>
+
+<div class="tw"><table>
+<tr><td><b>Character</b></td><td>Gradient diffuse, panoramic specular, a two-palette rim weighted toward up-facing surfaces and the upper body, fake skin with a redder falloff and a wax underglow, and a distance response that keeps a character legible when they are small on screen.</td></tr>
+<tr><td><b>Weapon</b></td><td>A smoothstep diffuse instead of a gradient. A weapon is mostly shiny metal, so the specular carries it - which makes this the one to reach for on hard-surface props generally, not just weapons.</td></tr>
+<tr><td><b>Base</b></td><td>The three shared responses and nothing else. Environment, or anything that does not fit the other two.</td></tr>
+</table></div>
+
+<h2>What about environments?</h2>
+
+<p>Use <a href="https://github.com/Vaei/MobMaterials">MobMaterials</a>. Its surface and landscape masters are lit, and they have the things a world needs and this does not: layers, triplanar, tiling break, parallax, weather, and terrain integration. A wall wants to be grounded in the level's light. That is the whole reason a character here is not.</p>
+
+<p>What <code>M_FortBase</code> is for is the case where you want that unlit stylized read <i>everywhere</i> - or an object that would look pasted in if it were lit while the character beside it was not.</p>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Reach for MobFort</th><th>Reach for MobMaterials</th></tr></thead>
+<tbody>
+<tr><td>A game stylized hard enough to want one lighting model everywhere</td><td>A world that should respond to its own light</td></tr>
+<tr><td>An objective, pickup, deployable or ability prop</td><td>Walls, floors, buildings, terrain</td></tr>
+<tr><td>Silhouetted geometry where grounding does not matter</td><td>Anything large enough to need layers, tiling break or detail</td></tr>
+<tr><td>A fixed cost per pixel, whatever the lighting</td><td>Anything wet, snowed on, or trampled</td></tr>
+</tbody>
+</table></div>
+
+<p>The two coexist. Nothing stops a level using MobMaterials for the world and MobFort for what moves through it, and that is the expected setup.</p>
+
+<h2>Ten minutes to a character</h2>
+
+<ol>
+<li><a href="install.html">Enable the plugin</a> and point <code>SpecPanorama</code> at an equirectangular HDR.</li>
+<li><b>Fort &rarr; Sync Sun From Directional Light</b>.</li>
+<li>Instance <code>M_FortCharacter</code>, set three textures.</li>
+<li>Duplicate it, tick <code>bEnemy</code>. Two rim palettes, however you want to use them.</li>
+</ol>
+
+<h2>Design</h2>
+
+<div class="tw"><table>
+<tr><td><b>The maths is not in the graph</b></td><td>It lives in <code>MobFortShading.ush</code> and is reached from Custom nodes. A master material is under ten nodes.</td></tr>
+<tr><td><b>Nothing you turn off is paid for</b></td><td>Features are gated by static bools on material function inputs, so a discarded input takes its texture taps with it. <a href="performance.html">Measured, not claimed.</a></td></tr>
+<tr><td><b>The materials ship built</b></td><td>No recipe asset, no generate step. Three masters and their instances are content.</td></tr>
+</table></div>
+
+<h2>Light reading</h2>
+
+<div class="tw"><table class="free">
+<tr><td><a href="https://technology.riotgames.com/news/valorant-shaders-and-gameplay-clarity">Valorant shaders and gameplay clarity</a></td><td>Riot's write-up, and the foundation this is built on. Gradient lambert, panoramic specular, the rim biases and the fake skin all come from here</td></tr>
+<tr><td><a href="https://steamcdn-a.akamaihd.net/apps/valve/2007/NPAR07_IllustrativeRenderingInTeamFortress2.pdf">Illustrative Rendering in Team Fortress 2</a></td><td>where the wrapped falloff and the rim light came from in the first place, in 2007</td></tr>
+<tr><td><a href="https://blog.daftsoftware.com/unreal-perf-maxing/">Mobile Forward Rendering guide</a></td><td>why this path exists and how to get on it</td></tr>
+<tr><td><a href="https://github.com/Vaei/ForwardRender">Forward Render</a></td><td>recommended. Ticks the sun into the collection for you, and loads the editor in mobile preview</td></tr>
+<tr><td><a href="https://github.com/Vaei/GradientTool">Gradient Tool</a></td><td>required. Realtime gradients, which UE's Color Ramp cannot give you</td></tr>
+<tr><td><a href="https://github.com/Vaei/MobMaterials">MobMaterials</a></td><td>the world these characters stand in. Lit surface, landscape and foliage masters on the same renderer</td></tr>
+</table></div>
+
+<h2>Where to go</h2>
+
+<div class="doors">
+<a class="door" href="install.html"><b>Set it up</b><span>Plugin, panorama, sun, and your first character.</span></a>
+<a class="door" href="masters.html"><b>Look things up</b><span>Every parameter on all three masters, and what each one is for.</span></a>
+<a class="door" href="gradients.html"><b>Author gradients</b><span>The atlas, the five rows, and giving a character its own.</span></a>
+<a class="door" href="troubleshooting.html"><b>Fix something</b><span>Symptom to cause, in order of likelihood.</span></a>
+</div>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gradients &middot; MobFort</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/docs.css">
+<script>try{var t=localStorage.getItem('mob-theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}catch(e){}</script>
+<script src="assets/site.js" defer></script>
+<script src="assets/docs.js" defer></script>
+</head>
+<body>
+<main>
+
+<h1>Gradients</h1>
+<p class="lede">Where the look lives. Five rows of one atlas.</p>
+
+<h2>Edit them</h2>
+
+<p>Open <code>GA_FortCharacter</code>, or <b>Fort &rarr; Open GA_FortCharacter</b>. Drag stops. It re-bakes as you go, so every material reading it updates live and none of them has to be recompiled.</p>
+
+<div data-shot="gradients.editor"></div>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Row</th><th>Read with</th><th>What it decides</th></tr></thead>
+<tbody>
+<tr><td><code>DiffuseFalloff</code></td><td>remapped N&middot;L</td><td>the highlight, the mid tone, the core shadow, and where the transitions sit</td></tr>
+<tr><td><code>SkinDiffuseFalloff</code></td><td>the same</td><td>the redder ramp skin blends toward</td></tr>
+<tr><td><code>SkinUnderglow</code></td><td>the underglow mask</td><td>the wax colour</td></tr>
+<tr><td><code>FresnelEnemy</code></td><td>the rim mask</td><td>red rim</td></tr>
+<tr><td><code>FresnelAlly</code></td><td>the rim mask</td><td>blue rim</td></tr>
+</tbody>
+</table></div>
+
+<h2>Why a gradient</h2>
+
+<p>A dot product decides where your terminator falls and how hard it is. A gradient means an artist decides instead - three tones and two transitions, placed by dragging.</p>
+
+<p>It is also what stands in for an ambient term. The ramp never reaches black at the dark end, so nothing on a character ever goes fully unlit, and there is no ambient light anywhere in the model to make that happen.</p>
+
+<div data-shot="gradients.falloff"></div>
+
+<div class="warn">
+Keep the format <b>HDR</b>. The rim rows run past 1.0 on purpose, because a rim that can only reach white cannot separate a character from a white wall.
+</div>
+
+<h2>One per character</h2>
+
+<p><code>GA_FortCharacter</code> is a default, not a fixture.</p>
+
+<ol>
+<li><b>Fort &rarr; New Character Atlas&hellip;</b> and pick where it goes.</li>
+<li>Edit the copy.</li>
+<li>On the character's instance, point <code>Atlas</code> at the copy's baked texture.</li>
+</ol>
+
+<div class="warn">
+<code>Atlas</code> wants the baked <b>texture</b> - the sibling <code>T_</code> asset - not the Gradient asset itself.
+</div>
+
+<p>Keep the row order and you are done. Change it and set the five <code>Row</code> scalars to match: <code>RowDiffuse</code>, <code>RowSkinDiffuse</code>, <code>RowUnderglow</code>, <code>RowRimEnemy</code>, <code>RowRimAlly</code>. They are parameters rather than names resolved at compile time, so your atlas does not have to match an order it did not choose.</p>
+
+<p>Row is a whole number. A fraction lands between two rows and the filter blends them.</p>
+
+<div data-shot="gradients.atlas"></div>
+
+<div class="note">
+Every gradient tap goes through the one <code>Atlas</code> parameter, so a character reading four rows spends one sampler on them, not four.
+</div>
+
+<h2>Starting points</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Row</th><th>Aim for</th></tr></thead>
+<tbody>
+<tr><td>Diffuse falloff</td><td>a dark plateau, a knee somewhere near the middle, a bright plateau. The knee position is the terminator; the knee width is how hard it reads</td></tr>
+<tr><td>Skin falloff</td><td>the same shape, but the dark end goes red rather than blue-grey</td></tr>
+<tr><td>Underglow</td><td>black, up into a deep red, back to black. It is an additive term, so the ends must be black</td></tr>
+<tr><td>Rims</td><td>black for the first half or more, then up hard past 1.0. The flat black start is what keeps the rim on the silhouette instead of washing the body</td></tr>
+</tbody>
+</table></div>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>If it is wrong &middot; MobFort</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/docs.css">
+<script>try{var t=localStorage.getItem('mob-theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}catch(e){}</script>
+<script src="assets/site.js" defer></script>
+<script src="assets/docs.js" defer></script>
+</head>
+<body>
+<main>
+
+<h1>If it is wrong</h1>
+<p class="lede">Symptom to cause, in order of likelihood.</p>
+
+<h2>It looks wrong</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
+<tbody>
+<tr><td>Everything is flat grey</td><td><code>SpecPanorama</code> is still the 4&times;4 placeholder, so the reflection is a uniform tint. Assign a real panorama</td></tr>
+<tr><td>Everything is blown out white</td><td><code>SpecularScalar</code> against an HDR panorama. It defaults to 0.12; go lower before going higher</td></tr>
+<tr><td>Every surface is a mirror whatever the roughness</td><td>the panorama has no mip chain. Set mip generation to anything but <code>NoMipmaps</code> - roughness picks a mip, and the material compiles and renders fine without one, so nothing tells you</td></tr>
+<tr><td>Everyone is pink</td><td><code>SkinAmount</code> above 0 on a mesh with no vertex paint. Unpainted geometry arrives white, so the mask reads 1 everywhere. Paint red, or leave <code>SkinAmount</code> at 0</td></tr>
+<tr><td>Metal everywhere</td><td><code>CRM</code> blue is metallic. A pack with occlusion there needs <code>Metallic</code> at 0 and <code>bUseCRMTexture</code> off, or a repack</td></tr>
+<tr><td>The whole surface glows</td><td><code>bEmissive</code> is on over an albedo with no alpha channel, which samples as 1</td></tr>
+<tr><td>Reflections are too sharp at high roughness</td><td><code>MaxMip</code> is below the panorama's real mip count</td></tr>
+<tr><td>A visible seam down one side of every reflection</td><td>the panorama's <b>X</b> address mode is not Wrap</td></tr>
+<tr><td>The diffuse has no terminator</td><td>the <code>DiffuseFalloff</code> row has no knee in it, or the sun is pointing at the camera. <a href="gradients.html">Gradients</a></td></tr>
+</tbody>
+</table></div>
+
+<div data-shots="troubleshooting.mirror, troubleshooting.pink"></div>
+
+<h2>The rim</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
+<tbody>
+<tr><td>No rim at all</td><td><code>bFriendFoeRim</code> off, or <code>RimIntensity</code> at 0</td></tr>
+<tr><td>Enemies are blue</td><td><code>bEnemy</code> is a <b>static switch</b>, so ally and enemy are two instances. Setting it at runtime does nothing</td></tr>
+<tr><td>The rim washes the whole body</td><td>the rim row's black plateau is too short. Push the first colour stop later</td></tr>
+<tr><td>The rim is a sub-pixel line</td><td>the opposite - the plateau runs too late. Pull it earlier</td></tr>
+<tr><td>Debug mode 5 shows red over the whole body</td><td>correct. Mode 5 is the raw mask <i>before</i> the gradient shapes it</td></tr>
+<tr><td>The rim reads as a sticker, not as light</td><td><code>RimUpBias</code> and <code>RimHeightBias</code> at 0. They are what make it describe the silhouette instead of outlining it</td></tr>
+</tbody>
+</table></div>
+
+<h2>Gradients</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
+<tbody>
+<tr><td>Edits do nothing</td><td>the instance's <code>Atlas</code> points at a different atlas than the one you are editing</td></tr>
+<tr><td>A row reads as the wrong colour entirely</td><td><code>Atlas</code> is pointing at the <b>Gradient asset</b> instead of its baked <code>T_</code> texture, or the row scalars do not match your atlas's order</td></tr>
+<tr><td>A row looks like two rows blended</td><td>a <code>Row</code> scalar has a fractional value. They must be whole numbers</td></tr>
+<tr><td>The rim cannot separate from a white wall</td><td>the atlas format is LDR, so the rim clamps at 1.0. Set it to HDR</td></tr>
+</tbody>
+</table></div>
+
+<h2>Lighting</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
+<tbody>
+<tr><td>Rotating the sun changes nothing</td><td>expected. Nothing reads a light actor. <b>Fort &rarr; Sync Sun From Directional Light</b></td></tr>
+<tr><td>The light comes from the wrong side</td><td><code>SunDirection</code> points <b>toward</b> the light, so it is the negated forward vector. Sync Sun handles this</td></tr>
+<tr><td>Characters ignore the level's lighting entirely</td><td>also expected, and the point. Areas are dialled with <code>Indirect</code>, not with lights</td></tr>
+<tr><td>Characters look pasted onto a dark room</td><td>nothing wrote <code>Indirect</code> for that area. It is the one knob that ties a character to where they are standing, and it starts at 1 everywhere</td></tr>
+<tr><td>A character is a chrome cutout in a dark corner</td><td><code>SpecDarkenExponent</code> is at 1. Raise it</td></tr>
+</tbody>
+</table></div>
+
+<h2>Build</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Symptom</th><th>Cause</th></tr></thead>
+<tbody>
+<tr><td><code>Sampler type is Linear Color, should be Masks</code></td><td>a texture whose compression does not match the sampler type on its parameter. Usually a CRM pack that is not <code>TC_Masks</code></td></tr>
+<tr><td>An include cannot be found</td><td>the runtime module registers <code>/MobFort</code> at <code>PostConfigInit</code>. If the plugin failed to compile there is no mapping and the error is an undeclared identifier, not a missing file</td></tr>
+<tr><td>Verify reports a permutation with no shader map</td><td>on a cold derived data cache, run it again. If it persists, that permutation is failing to compile - open the master and switch it on by hand to see the error</td></tr>
+<tr><td>The Fort menu is missing</td><td>Editor Preferences &rarr; Plugins &rarr; Mob Fort Editor &rarr; Show Toolbar Menu</td></tr>
+<tr><td>A hand edit to a master vanished</td><td><b>Rebuild Materials</b> empties and re-authors each graph. Edit <code>author_fort.py</code> or the <code>.ush</code>, not the graph</td></tr>
+</tbody>
+</table></div>
+
+</main>
+</body>
+</html>

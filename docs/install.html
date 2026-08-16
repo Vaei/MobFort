@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Install &middot; MobFort</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/docs.css">
+<script>try{var t=localStorage.getItem('mob-theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}catch(e){}</script>
+<script src="assets/site.js" defer></script>
+<script src="assets/docs.js" defer></script>
+</head>
+<body>
+<main>
+
+<h1>Install</h1>
+<p class="lede">Four steps to a character on screen. UE5.8+.</p>
+
+<h2>1. The plugin</h2>
+
+<pre><code>cd YourProject/Plugins
+git clone git@github.com:Vaei/GradientTool.git
+git clone git@github.com:Vaei/MobFort.git</code></pre>
+
+<p><a href="https://github.com/Vaei/GradientTool">GradientTool</a> is required, not optional - the diffuse falloff and both rim palettes are gradients.</p>
+
+<p>Rebuild, open the project. A <b>Fort</b> button appears on the level editor toolbar.</p>
+
+<div data-shot="install.menu"></div>
+
+<h2>2. A panorama</h2>
+
+<p>Point <code>SpecPanorama</code> at an equirectangular HDR image. This is every reflection in your scene, so pick one that matches the level's sky.</p>
+
+<div class="warn">
+Mip generation must not be <code>NoMipmaps</code>. Roughness picks a mip, so without a chain every surface is a mirror at every roughness - and the material still compiles and still renders, so nothing tells you.
+</div>
+
+<p>Set <code>MaxMip</code> to roughly the mip at which the image is a few pixels across. For a 2048&times;1024 panorama that is about 8.</p>
+
+<p>The plugin ships a flat 4&times;4 placeholder so a fresh install compiles. It is grey, not broken.</p>
+
+<div data-shot="install.panorama"></div>
+
+<h2>3. The sun</h2>
+
+<p><b>Fort &rarr; Sync Sun From Directional Light</b>. It writes your level's directional light into <code>MPC_FortLighting</code> and saves.</p>
+
+<p>Better, if you are staying on this renderer: install <a href="https://github.com/Vaei/ForwardRender">ForwardRender</a> and it ticks the sun in for you, as well as loading the editor in mobile forward preview. <a href="lighting.html">Settings here.</a></p>
+
+<div class="note">
+Nothing in MobFort reads a light actor - the masters are Unlit, so the engine never hands them one. Until this runs, rotating your sun changes nothing on a character. Run it again whenever the sun moves, or drive the same two parameters from the level Blueprint if it moves during play.
+</div>
+
+<h2>4. A character</h2>
+
+<p>Instance <code>M_FortCharacter</code> and set three textures: <b>BaseColor</b>, <b>Normal</b> and <b>CRM</b>. Tick <code>bUseCRMTexture</code>.</p>
+
+<p>Duplicate the instance and tick <code>bEnemy</code>. Ally and enemy are two instances rather than one instance with a scalar, so only one rim gradient ever compiles.</p>
+
+<div data-shot="install.instance"></div>
+
+<h2>What to expect first time</h2>
+
+<div class="tw"><table class="free">
+<tbody>
+<tr><td>Everything is flat grey</td><td>the placeholder panorama is a uniform 4&times;4. Step 2</td></tr>
+<tr><td>Everything is blown out white</td><td><code>SpecularScalar</code> against a bright HDR. It defaults to 0.12 for a reason; go lower before going higher</td></tr>
+<tr><td>Everyone is pink</td><td>skin. See <a href="troubleshooting.html">If it is wrong</a></td></tr>
+</tbody>
+</table></div>
+
+<h2>The Fort menu</h2>
+
+<p>Everything here is also a Python call, but you should not need one.</p>
+
+<div class="tw"><table class="free">
+<tbody>
+<tr><td><b>New Character Atlas&hellip;</b></td><td>copies <code>GA_FortCharacter</code> so a character can have gradients of its own</td></tr>
+<tr><td><b>Open <i>&lt;atlas&gt;</i></b></td><td>one entry per Gradient asset in the project</td></tr>
+<tr><td><b>Sync Sun From Directional Light</b></td><td>writes the level's sun into <code>MPC_FortLighting</code></td></tr>
+<tr><td><b>Open MPC_FortLighting</b></td><td>scrub <code>Indirect</code> and every character follows live</td></tr>
+<tr><td><b>Open <i>&lt;master&gt;</i></b></td><td>the three masters</td></tr>
+<tr><td><b>Verify Contract</b></td><td>asserts what the <a href="performance.html">cost</a> page claims. 47 checks, Output Log</td></tr>
+<tr><td><b>Rebuild Materials</b></td><td>re-authors every asset from <code>author_fort.py</code></td></tr>
+</tbody>
+</table></div>
+
+<p>Hide it under Editor Preferences &rarr; Plugins &rarr; Mob Fort Editor.</p>
+
+<div class="note">
+<b>Rebuild Materials</b> is maintenance, not setup. The materials ship built - you only need it after editing the builder or the gradient row list. Each asset is emptied and re-authored in place, so instances keep their overrides, but anything hand-edited in those graphs is lost.
+</div>
+
+<h2>Sanity check</h2>
+
+<p><b>Fort &rarr; Verify Contract</b>. 47 claims, results in the Output Log. On a cold derived data cache run it twice - the first pass reports permutations nobody has compiled yet.</p>
+
+<p><a class="cta" href="masters.html">Every parameter &rarr;</a></p>
+
+</main>
+</body>
+</html>

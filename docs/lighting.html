@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lighting &middot; MobFort</title>
+<link rel="icon" href="assets/icon.png">
+<link rel="stylesheet" href="assets/docs.css">
+<script>try{var t=localStorage.getItem('mob-theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light')}catch(e){}</script>
+<script src="assets/site.js" defer></script>
+<script src="assets/docs.js" defer></script>
+</head>
+<body>
+<main>
+
+<h1>Lighting</h1>
+<p class="lede">One collection is the whole interface. No light actor is ever read.</p>
+
+<div data-shot="lighting.mpc"></div>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Parameter</th><th>xyz / rgb</th><th>w / a</th></tr></thead>
+<tbody>
+<tr><td><code>SunDirection</code></td><td>direction <b>toward</b> the light</td><td>unused, deliberately</td></tr>
+<tr><td><code>SunColor</code></td><td>colour</td><td>intensity</td></tr>
+<tr><td><code>Indirect</code></td><td>diffuse scale, specular scale, clamp min</td><td>clamp max</td></tr>
+<tr><td><code>Depth</code></td><td>brighten start, brighten end, brighten max</td><td>rim scale max</td></tr>
+</tbody>
+</table></div>
+
+<p>Packed into vectors rather than spread over scalars, because each one is a node in every graph that reads it and four components cost the same one node as one does.</p>
+
+<h2>The sun</h2>
+
+<p><b>Fort &rarr; Sync Sun From Directional Light</b> writes your level's directional light in and saves.</p>
+
+<div class="note">
+It copies direction and colour only. <code>SunColor</code>'s intensity is left where it was, because a light actor's intensity is in lux and an unlit master has no exposure to relate that to - copying it across would blow every character out the moment someone brightened the level. The specular darkening exponent in <code>SunDirection.w</code> is preserved for the same reason.
+</div>
+
+<p>One shot. For a sun that keeps moving, see below.</p>
+
+<h2>Live, with ForwardRender</h2>
+
+<p><a href="https://github.com/Vaei/ForwardRender">ForwardRender</a> ticks the level's directional light into an MPC every editor frame, so the sun stops being something you remember to sync. It also puts the editor into mobile forward preview at load, which is the only mode where the numbers on the <a href="performance.html">cost</a> page mean anything.</p>
+
+<p>Project Settings &rarr; Editor &rarr; Forward Render Settings:</p>
+
+<div class="tw"><table class="free">
+<tbody>
+<tr><td><b>Light Vector MPC Path</b></td><td><code>/MobFort/MPC_FortLighting</code></td></tr>
+<tr><td><b>Light Vector Parameter Name</b></td><td><code>SunDirection</code></td></tr>
+<tr><td><b>Invert Light Vector</b></td><td><b>on</b> - it writes the forward vector, and this wants the direction toward the light</td></tr>
+</tbody>
+</table></div>
+
+<p>Then click <b>Set as Default</b>, or the settings revert.</p>
+
+<div class="note">
+This is why <code>SunDirection.w</code> carries nothing. ForwardRender writes the vector as a whole colour, so its alpha lands on the fourth component whatever you put there - which is exactly why the specular darkening exponent is its own scalar rather than packed alongside. Nothing MobFort needs can live in <code>w</code>.
+</div>
+
+<p>It ticks in the editor only, and not during PIE. Drive the same parameter from your game code or level Blueprint if the sun moves at runtime.</p>
+
+<h2>Indirect</h2>
+
+<p>There is no light actor in this path and no indirect lighting cache to sample, so these two scales are the hook a lighting volume writes.</p>
+
+<div class="tw"><table class="free">
+<tbody>
+<tr><td><b>Diffuse scale</b></td><td>how lit this area's characters are</td></tr>
+<tr><td><b>Specular scale</b></td><td>the same for reflections, then raised to the darkening exponent</td></tr>
+<tr><td><b>Clamp min / max</b></td><td>the window both are held inside</td></tr>
+</tbody>
+</table></div>
+
+<p>Two scales rather than one because specular has to darken faster than diffuse as an area gets darker. A shadowed character lit only by a reflection reads as a chrome cutout otherwise.</p>
+
+<p>The clamps are the point. A bright volume cannot blow a character out and a dark one cannot swallow them - which is the whole reason this is a pair of scalars and not a light.</p>
+
+<div data-shot="lighting.indirect"></div>
+
+<h2>Distance</h2>
+
+<p>A character far from camera covers a few dozen pixels, and every cue that identifies them - silhouette, palette, rim - is fighting the background at that size. So both the brightness and the rim widen with range.</p>
+
+<p>Set it to zero if your game never puts characters at distance. It is a compensation, not a look.</p>
+
+<div class="tw"><table class="free">
+<tbody>
+<tr><td><b>Brighten start / end</b></td><td>the range the response ramps over, in world units</td></tr>
+<tr><td><b>Brighten max</b></td><td>how much brighter, at the far end</td></tr>
+<tr><td><b>Rim scale max</b></td><td>how much wider the rim gets, at the far end</td></tr>
+</tbody>
+</table></div>
+
+<p>Both clamped at the far end, or a distant target turns into a lamp.</p>
+
+<p>Brighten scales the lit term rather than adding to it. A flat add lifts the core shadow along with everything else, and the character goes milky at exactly the distance the cue was for.</p>
+
+<div data-shot="lighting.depth"></div>
+
+</main>
+</body>
+</html>

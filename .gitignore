@@ -1,0 +1,10 @@
+DerivedDataCache
+Saved
+Script
+Intermediate
+Binaries
+.idea
+.vs
+*.sln
+__pycache__
+*.pyc
