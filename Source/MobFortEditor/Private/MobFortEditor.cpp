@@ -1,4 +1,4 @@
-// Copyright (c) Jared Taylor
+﻿// Copyright (c) Jared Taylor
 
 #include "MobFortEditor.h"
 
@@ -82,6 +82,39 @@ void FMobFortEditorModule::ShutdownModule()
 	FMobFortEditorStyle::Unregister();
 }
 
+namespace
+{
+	/** The fixed left to right order of the Mob toolbar buttons. A button that is not listed sorts to the end. */
+	int32 MobToolbarOrder(const FName EntryName)
+	{
+		static const FName Order[] =
+		{
+			TEXT("WorldMenu"),
+			TEXT("MobLightsMenu"),
+			TEXT("MobWaterMenu"),
+			TEXT("FortMenu"),
+			TEXT("MatMenu"),
+		};
+
+		for (int32 Index = 0; Index < UE_ARRAY_COUNT(Order); ++Index)
+		{
+			if (Order[Index] == EntryName)
+			{
+				return Index;
+			}
+		}
+
+		return MAX_int32;
+	}
+
+	// Every Mob plugin installs this same comparison on the shared section, so the order holds whichever of them
+	// are installed and whatever order their modules load in.
+	bool MobToolbarOrderLess(const FToolMenuEntry& A, const FToolMenuEntry& B, const FToolMenuContext&)
+	{
+		return MobToolbarOrder(A.Name) < MobToolbarOrder(B.Name);
+	}
+}
+
 void FMobFortEditorModule::RegisterMenus()
 {
 	FToolMenuOwnerScoped OwnerScoped(this);
@@ -108,7 +141,9 @@ void FMobFortEditorModule::RegisterMenus()
 	// The style that gives a toolbar button its label beside the icon.
 	Entry.StyleNameOverride = TEXT("CalloutToolbar");
 
-	ToolBar->FindOrAddSection(TEXT("PlayGameExtensions")).AddEntry(Entry);
+	FToolMenuSection& Section = ToolBar->FindOrAddSection(TEXT("MobTools"));
+	Section.Sorter = FToolMenuSectionSorter::CreateStatic(&MobToolbarOrderLess);
+	Section.AddEntry(Entry);
 }
 
 void FMobFortEditorModule::FindGradientAssets(TArray<FAssetData>& OutAssets)
