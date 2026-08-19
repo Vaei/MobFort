@@ -18,7 +18,11 @@ Every number is the Material Editor's own estimate rather than a count of taps i
 shader. The estimate over-reports, so these are baselines to hold steady, not ground truth.
 """
 
+import importlib
+
 import unreal
+
+import fort_version
 
 MEL = unreal.MaterialEditingLibrary
 EAL = unreal.EditorAssetLibrary
@@ -26,7 +30,7 @@ EAL = unreal.EditorAssetLibrary
 ROOT = '/MobFort'
 
 SWITCHES = ['bUseDiffuse', 'bUseSpecular', 'bSpecularFresnel', 'bUseCRMTexture', 'bEmissive',
-            'bFriendFoeRim', 'bSkin', 'bUnderglow', 'bEnemy', 'bDebug']
+            'bFriendFoeRim', 'bSkin', 'bUnderglow', 'bEnemy', 'bWetness', 'bDebug']
 
 FULL = {'bUseDiffuse', 'bUseSpecular', 'bSpecularFresnel'}
 CHARACTER_FULL = FULL | {'bFriendFoeRim', 'bSkin', 'bUnderglow'}
@@ -157,6 +161,7 @@ def run():
             ('debug on', FULL | {'bDebug'}),
             ('crm texture', full | {'bUseCRMTexture'}),
             ('emissive', full | {'bEmissive'}),
+            ('wet', full | {'bWetness'}),
         ]
         if name == 'M_FortCharacter':
             cases += [('no %s' % s, full - {s})
@@ -224,6 +229,20 @@ def run():
             r.check('%s emissive costs no texture of its own' % name,
                     emissive['tex'] == on['tex'] and emissive['samplers'] == on['samplers'],
                     'tex %s -> %s' % (on['tex'], emissive['tex']))
+
+        # Wetness reads primitive data and rewrites terms that are already there. If it ever costs
+        # a tap, something has grown a mask texture that the design says it does not have.
+        wet = m['wet']
+        if wet['ps']:
+            r.check('%s wetness costs no texture of its own' % name,
+                    wet['tex'] == on['tex'] and wet['samplers'] == on['samplers'],
+                    'tex %s -> %s, samplers %s -> %s'
+                    % (on['tex'], wet['tex'], on['samplers'], wet['samplers']))
+
+            # The switch has to be live. Off, the mask is a constant zero, every lerp it feeds folds
+            # and the primitive data is never read - so this permutation must be the dearer one.
+            r.check('%s wetness gives its cost back when off' % name,
+                    on['ps'] < wet['ps'], 'ps %s off, %s on' % (on['ps'], wet['ps']))
 
     if 'M_FortCharacter' in masters:
         m = measured['M_FortCharacter']
@@ -300,6 +319,13 @@ def run():
         r.check('the panorama has a mip chain',
                 str(pano.get_editor_property('mip_gen_settings')).find('NO_MIPMAPS') < 0,
                 str(pano.get_editor_property('mip_gen_settings')))
+
+    # Everything above compares the content against itself, so it passes just as happily on content
+    # an older plugin built. This is the only check that can tell that apart.
+    importlib.reload(fort_version)
+    _log('--- version %s ---' % fort_version.plugin_version())
+    for failure in fort_version.check():
+        r.check(failure, False)
 
     _log('%d passed, %d failed' % (r.passed, len(r.failed)))
     for f in r.failed:

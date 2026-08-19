@@ -28,6 +28,12 @@ private:
 	/** Asserts what the design claims: what each feature costs, and what turning it off gives back. */
 	static void Verify();
 
+	/** Bakes the cubemaps selected in the content browser into panoramas MobFort can reflect. */
+	static void ConvertSelectedToPanorama();
+
+	/** @return Whether the content browser selection holds a cubemap. */
+	static bool HasCubemapSelected();
+
 	/** Copies the shipped atlas so a character can have gradients of its own. */
 	static void NewCharacterAtlas();
 	static bool CanMakeAtlas();

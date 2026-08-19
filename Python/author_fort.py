@@ -21,7 +21,11 @@ discarded function input is never compiled, so a feature that is off takes its t
 its maths with it.
 """
 
+import importlib
+
 import unreal
+
+import fort_version
 
 MEL = unreal.MaterialEditingLibrary
 EAL = unreal.EditorAssetLibrary
@@ -67,6 +71,7 @@ GROUP_GRADIENT = '15 - Gradient'
 GROUP_SURFACE = '20 - Surface'
 GROUP_SPECULAR = '30 - Specular'
 GROUP_DIFFUSE = '40 - Diffuse'
+GROUP_WET = '45 - Wetness'
 GROUP_TEAM = '50 - Team'
 GROUP_SKIN = '60 - Skin'
 GROUP_DEBUG = '90 - Debug'
@@ -136,6 +141,7 @@ def get_or_create_material(name):
 
 
 def save(asset):
+    fort_version.stamp(asset)
     EAL.save_loaded_asset(asset, only_if_is_dirty=False)
 
 
@@ -251,6 +257,23 @@ def scalar_param(owner, name, default, group, x, y, sort=0, desc=None):
     e.set_editor_property('default_value', float(default))
     e.set_editor_property('group', group)
     e.set_editor_property('sort_priority', sort)
+    if desc:
+        e.set_editor_property('desc', desc)
+    return e
+
+
+def cpd_scalar(owner, name, index, x, y, desc=None):
+    """A scalar read from the primitive's custom primitive data rather than from an instance.
+
+    The index is the parameter: a CPD parameter never appears on an instance, so the name is only
+    what the graph calls it and the default is whatever the primitive has not written, which is
+    zero. MobFortTypes.h holds the indices these have to agree with.
+    """
+    e = expr(owner, unreal.MaterialExpressionScalarParameter, x, y)
+    e.set_editor_property('parameter_name', name)
+    e.set_editor_property('default_value', 0.0)
+    e.set_editor_property('use_custom_primitive_data', True)
+    e.set_editor_property('primitive_data_index', int(index))
     if desc:
         e.set_editor_property('desc', desc)
     return e
@@ -572,6 +595,15 @@ MPC_VECTORS = [
 
 MPC_SCALARS = [
     ('SpecDarkenExponent', 1.5),
+    # How far round the sky is turned. Written by whatever owns the sky sphere, so the panorama a
+    # character reflects and the sky behind them face the same way.
+    ('SkyYaw', 0.0),
+]
+
+# Vectors nothing here reads, published for whatever else in a project has to line up with the sky.
+MPC_EXTRA_VECTORS = [
+    # Where the sky projects from, so a material doing its own projection can use the same point.
+    ('SkyProjectionCenter', (0.0, 0.0, 0.0, 0.0)),
 ]
 
 
@@ -590,7 +622,7 @@ def build_lighting_collection():
                                     unreal.MaterialParameterCollectionFactoryNew())
 
     vectors = []
-    for name, value in MPC_VECTORS:
+    for name, value in MPC_VECTORS + MPC_EXTRA_VECTORS:
         p = unreal.CollectionVectorParameter()
         p.set_editor_property('parameter_name', name)
         p.set_editor_property('default_value', LC(*value))
@@ -615,23 +647,33 @@ def build_lighting_collection():
 # ---------------------------------------------------------------------------
 
 _CODE_SURFACE = """
-float3 N = FortWorldNormal(NormalTS, Parameters.TangentToWorld);
+FortUnpackCRM(CRM, Cavity, Roughness, Metallic);
+
+float3 WetNormalTS = NormalTS;
+Albedo = AlbedoIn;
+Wet = FortWetness(WetMask, WetPooling, WetDarken, WetRoughness, WetFlatten, Cavity,
+                  Parameters.TangentToWorld, WetNormalTS, Albedo, Roughness);
+
+float3 N = FortWorldNormal(WetNormalTS, Parameters.TangentToWorld);
 float3 L = normalize(SunDirection.xyz);
 
 NdotV = saturate(dot(N, V));
 DiffuseTime = FortDiffuseTime(dot(N, L));
 R = FortReflect(N, V);
 
-FortUnpackCRM(CRM, Cavity, Roughness, Metallic);
-FortIndirect(Indirect, SpecDarken, DiffuseScale, SpecScale);
+FortIndirect(Indirect, SpecDarken, LightDarken, DiffuseScale, SpecScale);
 FortDepth(Depth, DepthParams, Brighten, FresnelScale);
 
 return N;
 """
 
+_CODE_WET_MASK = """
+return FortWetMask(LocalPos.z, BoundsMin.z, BoundsMax.z, WetLine, Wetness, Softness);
+"""
+
 _CODE_SPECULAR = """
 return FortSpecular(Panorama, PanoramaSampler, R, Albedo, Metallic, Roughness, NdotV,
-                    SpecularScalar, MaxMip, FresnelBoost, bFresnel);
+                    SpecularScalar, MaxMip, FresnelBoost, bFresnel, SkyYaw);
 """
 
 _CODE_WEAPON_DIFFUSE = """
@@ -651,7 +693,7 @@ return FortCompose(Albedo, Diffuse, SunColor, Cavity, DiffuseScale, Specular, Sp
 
 _CODE_DEBUG = """
 return FortDebugView((int)(Mode + 0.5f), Diffuse, Specular, N, Cavity, Fresnel, SkinMask,
-                     Underglow, Brighten, Roughness, Metallic);
+                     Underglow, Brighten, Roughness, Metallic, Wet);
 """
 
 
@@ -724,19 +766,68 @@ def build_surface_function():
     view = expr(fn, unreal.MaterialExpressionCameraVectorWS, 0, 1600)
     pixel_depth = expr(fn, unreal.MaterialExpressionPixelDepth, 0, 1700)
 
+    # --- wetness -----------------------------------------------------------
+    # The line and the amount are per primitive rather than per instance: every character in a level
+    # is the same two material instances, and how wet each one is has to be able to differ without
+    # any of them owning a material of their own.
+    wet_line = cpd_scalar(fn, 'WetLine', 6, 0, 2400,
+                          'Height of the waterline as a fraction of the object bounds. Written by '
+                          'MobFortWetnessComponent as custom primitive data 6.')
+    wet_amount = cpd_scalar(fn, 'Wetness', 7, 0, 2460,
+                            'How wet the surface below the line is. Custom primitive data 7.')
+    wet_soft = scalar_param(fn, 'WetSoftness', 0.04, GROUP_WET, 0, 2520, 0,
+                            'How far the waterline fades out over, as a fraction of the bounds. '
+                            'The drip line.')
+    wet_darken = scalar_param(fn, 'WetDarken', 0.55, GROUP_WET, 0, 2580, 1,
+                              'What the albedo is multiplied by where the surface is soaked.')
+    wet_rough = scalar_param(fn, 'WetRoughness', 0.2, GROUP_WET, 0, 2640, 2,
+                             'What the roughness is multiplied by where the surface is soaked. '
+                             'This is the whole of the sheen: the panorama was already being read.')
+    wet_flatten = scalar_param(fn, 'WetFlatten', 0.6, GROUP_WET, 0, 2700, 3,
+                               'How far a film of water fills the normal detail in.')
+    wet_pooling = scalar_param(fn, 'WetPooling', 0.5, GROUP_WET, 0, 2760, 4,
+                               'How much the water prefers up-facing surfaces and creases over '
+                               'covering everything evenly.')
+
+    local_pos = expr(fn, unreal.MaterialExpressionLocalPosition, 0, 2820)
+    bounds = expr(fn, unreal.MaterialExpressionObjectLocalBounds, 0, 2880)
+
+    wet_mask = custom(fn, _CODE_WET_MASK, CMOT.CMOT_FLOAT1,
+                      ['LocalPos', 'BoundsMin', 'BoundsMax', 'WetLine', 'Wetness', 'Softness'],
+                      [], 400, 2600, 'Where the waterline sits on this object.')
+    link(local_pos, 'XYZ', wet_mask, 'LocalPos')
+    link(bounds, 'Min', wet_mask, 'BoundsMin')
+    link(bounds, 'Max', wet_mask, 'BoundsMax')
+    link(wet_line, '', wet_mask, 'WetLine')
+    link(wet_amount, '', wet_mask, 'Wetness')
+    link(wet_soft, '', wet_mask, 'Softness')
+
+    # A constant zero rather than a switch around the whole response: the mask folds away and every
+    # lerp it feeds folds with it, so a dry master pays for none of it and the shading code stays
+    # one path.
+    wet_gated = switch_param(fn, 'bWetness', wet_mask, '', const(fn, 0.0, 400, 2900), '',
+                             GROUP_FEATURES, 600, 2700, default=False, sort=7,
+                             desc='Wetness from the waterline a MobFortWetnessComponent writes. '
+                                  'Off, the primitive data is never read and nothing downstream '
+                                  'of it compiles.')
+
     surface = custom(
         fn, _CODE_SURFACE, CMOT.CMOT_FLOAT3,
-        ['NormalTS', 'CRM', 'SunDirection', 'SpecDarken', 'Indirect', 'V', 'DepthParams', 'Depth'],
+        ['NormalTS', 'CRM', 'SunDirection', 'SpecDarken', 'Indirect', 'V', 'DepthParams', 'Depth',
+         'AlbedoIn', 'WetMask', 'WetPooling', 'WetDarken', 'WetRoughness', 'WetFlatten',
+         'LightDarken'],
         [('DiffuseTime', CMOT.CMOT_FLOAT1),
          ('NdotV', CMOT.CMOT_FLOAT1),
          ('R', CMOT.CMOT_FLOAT3),
+         ('Albedo', CMOT.CMOT_FLOAT3),
          ('Cavity', CMOT.CMOT_FLOAT1),
          ('Roughness', CMOT.CMOT_FLOAT1),
          ('Metallic', CMOT.CMOT_FLOAT1),
          ('DiffuseScale', CMOT.CMOT_FLOAT1),
          ('SpecScale', CMOT.CMOT_FLOAT1),
          ('Brighten', CMOT.CMOT_FLOAT1),
-         ('FresnelScale', CMOT.CMOT_FLOAT1)],
+         ('FresnelScale', CMOT.CMOT_FLOAT1),
+         ('Wet', CMOT.CMOT_FLOAT1)],
         800, 1000, 'Shading vectors, texture pack and the clamped indirect and distance responses.')
     link(normal, 'RGB', surface, 'NormalTS')
     link(crm, '', surface, 'CRM')
@@ -746,6 +837,26 @@ def build_surface_function():
     link(view, '', surface, 'V')
     link(depth_params, '', surface, 'DepthParams')
     link(pixel_depth, 'R', surface, 'Depth')
+
+    # Albedo goes through the node rather than round it because wetness darkens it, and the wet
+    # normal has to reach the reflection vector as well.
+    link(albedo, '', surface, 'AlbedoIn')
+    link(wet_gated, '', surface, 'WetMask')
+    link(wet_pooling, '', surface, 'WetPooling')
+    link(wet_darken, '', surface, 'WetDarken')
+    link(wet_rough, '', surface, 'WetRoughness')
+    link(wet_flatten, '', surface, 'WetFlatten')
+
+    # How far this character's surroundings are from the room the collection is lit for. Zero when
+    # nothing writes it, which is a character lit exactly as the level says.
+    area_darken = cpd_scalar(fn, 'LightDarken', 8, 0, 2960,
+                             'How much darker this character is than the level, 0 to 1. Written by '
+                             'MobWorld as custom primitive data 8.')
+    area_gated = switch_param(fn, 'bAreaLighting', area_darken, '', const(fn, 0.0, 400, 3020), '',
+                              GROUP_FEATURES, 600, 2980, default=False, sort=8,
+                              desc='Let a volume darken this character without darkening every '
+                                   'other one. Off, the primitive data is never read.')
+    link(area_gated, '', surface, 'LightDarken')
 
     # --- specular ----------------------------------------------------------
     pano = texture_object_param(fn, 'SpecPanorama', TEX_PANORAMA, pano_type,
@@ -767,12 +878,12 @@ def build_surface_function():
     spec = custom(
         fn, _CODE_SPECULAR, CMOT.CMOT_FLOAT3,
         ['Panorama', 'R', 'Albedo', 'Metallic', 'Roughness', 'NdotV', 'SpecularScalar', 'MaxMip',
-         'FresnelBoost', 'bFresnel'],
+         'FresnelBoost', 'bFresnel', 'SkyYaw'],
         [], 800, 2000,
         'One panorama tap at a roughness-chosen mip. There are no analytic highlights in this model.')
     link(pano, '', spec, 'Panorama')
     link(surface, 'R', spec, 'R')
-    link(albedo, '', spec, 'Albedo')
+    link(surface, 'Albedo', spec, 'Albedo')
     link(surface, 'Metallic', spec, 'Metallic')
     link(surface, 'Roughness', spec, 'Roughness')
     link(surface, 'NdotV', spec, 'NdotV')
@@ -780,10 +891,11 @@ def build_surface_function():
     link(max_mip, '', spec, 'MaxMip')
     link(fresnel_boost, '', spec, 'FresnelBoost')
     link(fres_flag, '', spec, 'bFresnel')
+    link(collection(fn, 'SkyYaw', 0, 2500), '', spec, 'SkyYaw')
 
     # --- outputs -----------------------------------------------------------
     outs = [
-        ('Albedo', albedo, ''),
+        ('Albedo', surface, 'Albedo'),
         ('DiffuseTime', surface, 'DiffuseTime'),
         ('SunColor', sun_col, ''),
         ('N', surface, ''),
@@ -797,6 +909,7 @@ def build_surface_function():
         ('SpecScale', surface, 'SpecScale'),
         ('Brighten', surface, 'Brighten'),
         ('FresnelScale', surface, 'FresnelScale'),
+        ('Wet', surface, 'Wet'),
     ]
     for i, (name, src, src_out) in enumerate(outs):
         out = fn_output(fn, name, 1200, i * 120, i)
@@ -957,7 +1070,7 @@ def build_character_fx_function():
 
 # Mode order has to match FortDebugView in the ush.
 _DEBUG_MODES = ('0 off, 1 diffuse, 2 specular, 3 world normal, 4 cavity, 5 rim mask, 6 skin mask, '
-                '7 underglow, 8 distance brighten, 9 roughness, 10 metallic')
+                '7 underglow, 8 distance brighten, 9 roughness, 10 metallic, 11 wetness')
 
 
 def build_compose_function():
@@ -1001,6 +1114,7 @@ def build_compose_function():
     underglow = _in('UnderglowMask', FIT.FUNCTION_INPUT_SCALAR, 0.0, 'Debug only.')
     roughness = _in('Roughness', FIT.FUNCTION_INPUT_SCALAR, 0.5, 'Debug only.')
     metallic = _in('Metallic', FIT.FUNCTION_INPUT_SCALAR, 0.0, 'Debug only.')
+    wet = _in('Wet', FIT.FUNCTION_INPUT_SCALAR, 0.0, 'Debug only.')
 
     diffuse_used = switch(fn, b_diffuse, '', diffuse, '', const3(fn, (1, 1, 1), 300, 100), '',
                           500, 50)
@@ -1025,7 +1139,7 @@ def build_compose_function():
     mode = scalar_param(fn, 'DebugMode', 1.0, GROUP_DEBUG, 300, 900, 1, _DEBUG_MODES)
     debug = custom(fn, _CODE_DEBUG, CMOT.CMOT_FLOAT3,
                    ['Mode', 'Diffuse', 'Specular', 'N', 'Cavity', 'Fresnel', 'SkinMask',
-                    'Underglow', 'Brighten', 'Roughness', 'Metallic'],
+                    'Underglow', 'Brighten', 'Roughness', 'Metallic', 'Wet'],
                    [], 800, 900, 'Never compiled unless bDebug is on.')
     link(mode, '', debug, 'Mode')
     link(diffuse_used, '', debug, 'Diffuse')
@@ -1038,6 +1152,7 @@ def build_compose_function():
     link(brighten, '', debug, 'Brighten')
     link(roughness, '', debug, 'Roughness')
     link(metallic, '', debug, 'Metallic')
+    link(wet, '', debug, 'Wet')
 
     result = switch_param(fn, 'bDebug', debug, '', node, '', GROUP_DEBUG, 1100, 500,
                           default=False, sort=0,
@@ -1092,6 +1207,7 @@ def _wire_common(mat, surface, compose):
     link(surface, 'N', compose, 'N')
     link(surface, 'Roughness', compose, 'Roughness')
     link(surface, 'Metallic', compose, 'Metallic')
+    link(surface, 'Wet', compose, 'Wet')
 
 
 def build_base_master():
@@ -1233,6 +1349,11 @@ def build_instances():
 # ---------------------------------------------------------------------------
 
 def build_all():
+    # Reloaded here rather than left to the caller: save() holds the reference, so a stamp edited
+    # during a session would otherwise keep writing the version it was imported with.
+    importlib.reload(fort_version)
+    _log('authoring %s' % fort_version.plugin_version())
+
     build_textures()
     build_gradients()
     build_lighting_collection()

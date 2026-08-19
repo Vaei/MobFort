@@ -2,7 +2,7 @@
 
 #pragma once
 
-// Stylised shading for a renderer that supplies none. Included from Custom nodes as
+// Stylised shading for the mobile forward rendering path. Included from Custom nodes as
 // /MobFort/Public/MobFortShading.ush.
 //
 // The masters are Unlit, so nothing the engine does with lights, GI or reflections reaches them.
@@ -85,6 +85,58 @@ void FortUnpackCRM(float3 CRM, out float Cavity, out float Roughness, out float 
 }
 
 // ---------------------------------------------------------------------------
+// Wetness
+// ---------------------------------------------------------------------------
+
+/**
+ * How far up the surface the waterline is, and how much of it there is.
+ *
+ * The line is a fraction of the object's own bounds rather than a world height, so it stays on the
+ * boots while the character jumps, crouches or falls over - the same reason the team rim measures
+ * its height that way.
+ *
+ * Whoever writes the line owns the high water mark. Someone who wades out and walks off is still
+ * wet to the waist, so the line is what falls as they dry rather than what the water is doing now.
+ */
+float FortWetMask(float LocalZ, float BoundsMinZ, float BoundsMaxZ, float Line, float Amount,
+	float Softness)
+{
+	const float Height = saturate((LocalZ - BoundsMinZ) / max(BoundsMaxZ - BoundsMinZ, FORT_EPS));
+	return saturate((Line - Height) / max(Softness, FORT_EPS)) * saturate(Amount);
+}
+
+/**
+ * What water on the surface does to it: darker, smoother, flatter.
+ *
+ * No term is added. A wet surface is the same surface reflecting more of the same panorama, which
+ * is the whole reason this is affordable here - the reflection was already being paid for.
+ *
+ * Pooling weights all three by where water would actually sit: on up-facing surfaces, and down in
+ * the creases, which is also the last place it leaves.
+ */
+float FortWetness(float Mask, float Pooling, float Darken, float RoughScale, float Flatten,
+	float Cavity, float3x3 TangentToWorld, inout float3 NormalTS, inout float3 Albedo,
+	inout float Roughness)
+{
+	// The geometric normal rather than the shaded one, because where water sits is decided by the
+	// shape of the surface and not by the bumps painted on it.
+	const float3 GeoNormal = TangentToWorld[2];
+	const float Pools = lerp(1.0f, saturate(saturate(GeoNormal.z * 0.5f + 0.5f) + (1.0f - Cavity)),
+		saturate(Pooling));
+	const float W = saturate(Mask * Pools);
+
+	Albedo *= lerp(1.0f, Darken, W);
+	Roughness = saturate(lerp(Roughness, Roughness * RoughScale, W));
+
+	// Flattened in tangent space, before the one normalize the caller was already paying for. A
+	// film of water fills the detail in; it does not turn a wall into a puddle, so this goes to
+	// flat rather than to up.
+	NormalTS = lerp(NormalTS, float3(0.0f, 0.0f, 1.0f), W * saturate(Flatten));
+
+	return W;
+}
+
+// ---------------------------------------------------------------------------
 // Specular
 // ---------------------------------------------------------------------------
 
@@ -96,10 +148,14 @@ void FortUnpackCRM(float3 CRM, out float Cavity, out float Roughness, out float 
  * worth standing up in place of a captured one if an artist can put the highlights where the level
  * wants them.
  */
-float2 FortPanoramaUV(float3 Dir)
+float2 FortPanoramaUV(float3 Dir, float SkyYawDegrees)
 {
 	Dir = normalize(Dir);
-	return float2(atan2(Dir.y, Dir.x) * (0.5f / PI) + 0.5f,
+
+	// A yaw on a long/lat image is an offset along U and nothing else, so turning the sky costs one
+	// multiply-add rather than rotating the reflection vector. The texture wraps across, so the
+	// offset needs no wrapping of its own.
+	return float2(atan2(Dir.y, Dir.x) * (0.5f / PI) + 0.5f + SkyYawDegrees * (1.0f / 360.0f),
 		acos(clamp(Dir.z, -1.0f, 1.0f)) / PI);
 }
 
@@ -128,10 +184,10 @@ float FortRoughnessMip(float Roughness, float MaxMip)
  */
 float3 FortSpecular(Texture2D Panorama, SamplerState PanoramaSampler, float3 R, float3 Albedo,
 	float Metallic, float Roughness, float NdotV, float SpecularScalar, float MaxMip,
-	float FresnelBoost, float bFresnel)
+	float FresnelBoost, float bFresnel, float SkyYawDegrees)
 {
-	const float3 Env = Texture2DSampleLevel(Panorama, PanoramaSampler, FortPanoramaUV(R),
-		FortRoughnessMip(Roughness, MaxMip)).rgb;
+	const float3 Env = Texture2DSampleLevel(Panorama, PanoramaSampler,
+		FortPanoramaUV(R, SkyYawDegrees), FortRoughnessMip(Roughness, MaxMip)).rgb;
 
 	// The pack has no specular channel: the level is the inverse of roughness, so a rough
 	// dielectric reflects less as well as more diffusely. A metal keeps its reflectance and takes
@@ -159,10 +215,16 @@ float3 FortSpecular(Texture2D Panorama, SamplerState PanoramaSampler, float3 R, 
  * cannot blow a character out and a dark one cannot swallow them - which is the entire reason this
  * is a pair of scalars rather than a light.
  */
-void FortIndirect(float4 Indirect, float SpecDarken, out float OutDiffuse, out float OutSpec)
+void FortIndirect(float4 Indirect, float SpecDarken, float LightDarken, out float OutDiffuse,
+	out float OutSpec)
 {
-	OutDiffuse = clamp(Indirect.x, Indirect.z, Indirect.w);
-	OutSpec = clamp(pow(max(Indirect.y, 0.0f), max(SpecDarken, FORT_EPS)), Indirect.z, Indirect.w);
+	// Per primitive, so one character can stand in a dark room while another stands in a lit one.
+	// The collection is the room the level is lit for; this is how far this character is from it.
+	const float Scale = 1.0f - saturate(LightDarken);
+
+	OutDiffuse = clamp(Indirect.x * Scale, Indirect.z, Indirect.w);
+	OutSpec = clamp(pow(max(Indirect.y * Scale, 0.0f), max(SpecDarken, FORT_EPS)),
+		Indirect.z, Indirect.w);
 }
 
 // ---------------------------------------------------------------------------
@@ -258,13 +320,14 @@ float3 FortCompose(float3 Albedo, float3 Diffuse, float3 SunColor, float Cavity,
  * final image: a rim weighted to the wrong half of the body and a rim weighted correctly both
  * just look like a rim until you put them side by side.
  *
- *   1 diffuse gradient        5 friend-or-foe mask
- *   2 specular                6 skin mask
- *   3 world normal            7 underglow mask
+ *   1 diffuse gradient        5 friend-or-foe mask      9 roughness
+ *   2 specular                6 skin mask              10 metallic
+ *   3 world normal            7 underglow mask         11 wetness
  *   4 cavity                  8 distance brighten
  */
 float3 FortDebugView(int Mode, float3 Diffuse, float3 Specular, float3 Normal, float Cavity,
-	float Fresnel, float SkinMask, float Underglow, float Brighten, float Roughness, float Metallic)
+	float Fresnel, float SkinMask, float Underglow, float Brighten, float Roughness, float Metallic,
+	float Wet)
 {
 	if (Mode == 1) { return saturate(Diffuse); }
 	if (Mode == 2) { return saturate(Specular); }
@@ -276,5 +339,6 @@ float3 FortDebugView(int Mode, float3 Diffuse, float3 Specular, float3 Normal, f
 	if (Mode == 8) { return float3(0.0f, 0.0f, saturate(Brighten * 4.0f)); }
 	if (Mode == 9) { return saturate(Roughness).xxx; }
 	if (Mode == 10) { return saturate(Metallic).xxx; }
+	if (Mode == 11) { return float3(0.0f, saturate(Wet) * 0.4f, saturate(Wet)); }
 	return 0.0f.xxx;
 }

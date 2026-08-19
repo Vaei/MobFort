@@ -60,6 +60,10 @@ Team Fortress 2 is the basis for this shading that Riot built upon - the wrapped
   * Recommended. Ticks the sun into `MPC_FortLighting` for you, and loads the editor in mobile preview
 * [MobMaterials Plugin](https://github.com/Vaei/MobMaterials)
   * The world these characters stand in. Lit landscape, surface and foliage masters on the same renderer
+* [MobLights Plugin](https://github.com/Vaei/MobLights)
+  * Local lights for the mobile forward rendering path, and fog to put them in
+* [MobWater Plugin](https://github.com/Vaei/MobWater)
+  * Ponds, lakes, rivers and ocean on the same renderer, that these characters wade and swim in
 
 ## Features
 

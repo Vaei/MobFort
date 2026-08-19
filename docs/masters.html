@@ -55,6 +55,7 @@
 <tr><td><code>bUnderglow</code></td><td>on</td><td>the wax term</td></tr>
 <tr><td><code>bFriendFoeRim</code></td><td>on</td><td>the rim light</td></tr>
 <tr><td><code>bEnemy</code></td><td>off</td><td>which rim row this instance reads</td></tr>
+<tr><td><code>bWetness</code></td><td>off</td><td>wetness up to a waterline written as primitive data. Off, the data is never read and none of it compiles</td></tr>
 <tr><td><code>bUseDiffuse</code></td><td>on</td><td>off drops the whole diffuse response and its gradient tap</td></tr>
 <tr><td><code>bUseSpecular</code></td><td>on</td><td>off drops the panorama tap and its sampler</td></tr>
 <tr><td><code>bDebug</code></td><td>off</td><td>replaces the shaded result with one intermediate</td></tr>
@@ -144,6 +145,25 @@
 
 <p>Two colours and a soft edge, no gradient. A weapon is mostly shiny metal, so the specular carries it and the extra control a gradient gives has nothing to act on.</p>
 
+<h2>Wetness</h2>
+
+<div class="tw"><table class="free">
+<thead><tr><th>Parameter</th><th>Default</th><th>What</th></tr></thead>
+<tbody>
+<tr><td><code>WetSoftness</code></td><td>0.04</td><td>how far the waterline fades out over, as a fraction of the bounds. The drip line</td></tr>
+<tr><td><code>WetDarken</code></td><td>0.55</td><td>what the albedo is multiplied by where the surface is soaked</td></tr>
+<tr><td><code>WetRoughness</code></td><td>0.2</td><td>what the roughness is multiplied by there</td></tr>
+<tr><td><code>WetFlatten</code></td><td>0.6</td><td>how far a film of water fills the normal detail in</td></tr>
+<tr><td><code>WetPooling</code></td><td>0.5</td><td>how much the water prefers up-facing surfaces and creases over covering everything evenly</td></tr>
+</tbody>
+</table></div>
+
+<p>Darker, smoother and flatter below a line, and nothing at all above it. No term is added: a wet surface is the same surface reflecting more of the same panorama, which is the only reason this is affordable here - the reflection was already being paid for. It costs no texture and no sampler.</p>
+
+<p>Where the line sits comes from <b>custom primitive data</b>, not from the instance: slot <code>6</code> is the height as a fraction of the primitive's own bounds and slot <code>7</code> is how wet the surface below it is. A level is two character instances and a hundred characters, so how wet each one is has to differ without any of them owning a material.</p>
+
+<p><code>MobFortWetnessComponent</code> writes both. It keeps the line as a <b>high water mark</b>: someone who wades out to the bank is still wet to the waist, and drying is the line falling back down them, so the boots are the last thing to dry. Where the water is, it does not know - <code>SampleWaterline</code> does nothing until a subclass answers it, because a plugin cannot know what a project's water is.</p>
+
 <h2>Debug</h2>
 
 <p><code>bDebug</code> replaces the shaded result with one intermediate, chosen by <code>DebugMode</code>. The terms that decide whether a character is readable are exactly the ones with no signature in the final image: a rim weighted to the wrong half of the body and a rim weighted correctly both just look like a rim until you put them side by side.</p>
@@ -152,7 +172,7 @@
 <tbody>
 <tr><td><code>1</code> diffuse gradient</td><td><code>5</code> rim mask</td><td><code>9</code> roughness</td></tr>
 <tr><td><code>2</code> specular</td><td><code>6</code> skin mask</td><td><code>10</code> metallic</td></tr>
-<tr><td><code>3</code> world normal</td><td><code>7</code> underglow</td><td></td></tr>
+<tr><td><code>3</code> world normal</td><td><code>7</code> underglow</td><td><code>11</code> wetness</td></tr>
 <tr><td><code>4</code> cavity</td><td><code>8</code> distance brighten</td><td></td></tr>
 </tbody>
 </table></div>

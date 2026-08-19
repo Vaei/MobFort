@@ -24,6 +24,7 @@ public class MobFortEditor : ModuleRules
 				"Slate",
 				"SlateCore",
 				"UnrealEd",
+				"ContentBrowser",
 				"ToolMenus",
 				"Projects",
 				"Settings",

@@ -15,6 +15,9 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "IAssetTools.h"
 #include "IPythonScriptPlugin.h"
+#include "ContentBrowserModule.h"
+#include "IContentBrowserSingleton.h"
+#include "Engine/TextureCube.h"
 #include "ISettingsModule.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/PackageName.h"
@@ -250,6 +253,23 @@ TSharedRef<SWidget> FMobFortEditorModule::BuildMenu()
 			"their overrides. Anything hand-edited in these graphs is lost."),
 		FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("Icons.Refresh")),
 		FUIAction(FExecuteAction::CreateStatic(&FMobFortEditorModule::RebuildMaterials)));
+
+	Menu.AddMenuEntry(
+		LOCTEXT("Panorama", "Panorama From Cubemap"),
+		LOCTEXT("PanoramaTip",
+			"Bakes the cubemaps selected in the content browser into the long/lat images the "
+			"specular reads, one beside each cube in a Panorama folder.\n\n"
+			"A cubemap cannot be assigned to SpecPanorama and an .hdr imports as one whatever the "
+			"import settings say, which is what this is for. The bake goes through a material that "
+			"samples the cube, so the seam lands where FortPanoramaUV expects it rather than where "
+			"the source file happened to put it.\n\n"
+			"Mips are generated, because roughness picks one: without a chain every surface is a "
+			"mirror at every roughness and nothing says so. The Output Log reports the MaxMip to "
+			"set on the instance."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), TEXT("ClassIcon.TextureCube")),
+		FUIAction(
+			FExecuteAction::CreateStatic(&FMobFortEditorModule::ConvertSelectedToPanorama),
+			FCanExecuteAction::CreateStatic(&FMobFortEditorModule::HasCubemapSelected)));
 	Menu.EndSection();
 
 	Menu.BeginSection(TEXT("FortSettings"), LOCTEXT("SettingsSection", "Settings"));
@@ -335,6 +355,40 @@ void FMobFortEditorModule::Verify()
 	RunPython(
 		TEXT("import importlib, fort_verify; importlib.reload(fort_verify); fort_verify.run()"),
 		LOCTEXT("VerifyDone", "Fort: verification finished. See the Output Log."));
+}
+
+void FMobFortEditorModule::ConvertSelectedToPanorama()
+{
+	RunPython(
+		TEXT("import importlib, fort_panorama; importlib.reload(fort_panorama); ")
+		TEXT("fort_panorama.convert_selected()"),
+		LOCTEXT("PanoramaDone", "Fort: panoramas baked. See the Output Log for their MaxMip."));
+}
+
+bool FMobFortEditorModule::HasCubemapSelected()
+{
+	const FContentBrowserModule* ContentBrowser =
+		FModuleManager::GetModulePtr<FContentBrowserModule>(TEXT("ContentBrowser"));
+
+	if (!ContentBrowser)
+	{
+		return false;
+	}
+
+	TArray<FAssetData> Selected;
+	ContentBrowser->Get().GetSelectedAssets(Selected);
+
+	// The class name rather than the asset: asking for the object would load every cube the browser
+	// is showing, every time the menu is opened.
+	for (const FAssetData& Asset : Selected)
+	{
+		if (Asset.AssetClassPath == UTextureCube::StaticClass()->GetClassPathName())
+		{
+			return true;
+		}
+	}
+
+	return false;
 }
 
 bool FMobFortEditorModule::CanMakeAtlas()
